@@ -1,0 +1,165 @@
+Steps needed to establish a full audio/visual/data connection to the |pipe| agent.
+
+This is a bit intricate beacuse we manage all the security over the dataChannel,
+meaning that we have to create a datachannel first, then upgrade it to support
+realtime media too.
+
+
+
+
+A) Pairing - 
+
+A users smartphone needs to be paired with a new IoT device this happens by 
+exchanging X509 certificates. We use a certificate and nonce transfered 
+over a secure channel to validate this exchange.
+(reference javascript is in https://pi.pe/iot/fclaim.html - which uses a scanned QR code to transfer the fingerprint and nonce)
+
+Steps:
+1) Create a certificate: The webRTC infastructure will create a new one when needed. - in future we will use PeerConnection.generateCertificate() to have more control over this process.
+
+Create an RTCPeerConnection using the factory or static method available on your platform. This will give you the option to set STUN: and Turn: server URLs and credentials - it is also when you can apply a previously stored client certificate.
+
+2) request a datachannel:
+                avrelay = pc.createDataChannel('avrelay', {});
+3) parse the generated sdp
+                pc.createOffer()
+                    .then(function (localDesc) {
+		        sdpobj = Phono.sdp.parseSDP(localDesc.sdp);
+                    })
+
+4) calculate the local id
+            var id = JSON.stringify(sdpobj.contents[0].fingerprint.print);
+            id = id.split(":").join("");
+            id = id.split('"').join("");
+
+This example uses the sdp parser defined in https://pi.pe/iot/js/phono.sdp.js
+You are encouraged to replicate the functionality in your development language.
+
+5) use the fingerprint/id to connect to a websocket on the rendezvous server - 
+This will forward messages between the smartphone and the 
+
+Open a websocket to https://pi.pe/websocket/?finger={$id}
+
+6) obtain the IoT device's Id and the nonce - this may be a QR, a BTLE beacon
+or some other secure back channel.
+
+7) create a sessionID - that will be unique to this run
+we use a concatenation of $id-$iotId-$timeStamp
+
+8) calculate the nonsense value this is:
+
+sha256($iotId + ":" + nonce + ":" + $id).tohex().toUpperCase();
+
+9) Now you need to format a message to send to your IoT device
+This is json with the following entries:
+to: $IoTId
+from: $id
+session: $session
+nonsense: $nonsense
+type: "offer"
+sdp: sdpObj
+
+10) set the localDescription
+	pc.setLocalDescription(localDesc);
+
+11) in the sucess call back from setLocalDescription,
+send the message you just built
+
+
+12)  attach a method to the onicecandidate event that sends json objects for each of the candidates.
+    var can_j = Phono.sdp.parseCandidate("a=" + cand.candidate);
+    var candy = {
+        "to": $iotId,
+        "type": 'candidate',
+        "candidate": can_j,
+        "session": $session,
+        "from": $id,
+        "sdpMLineIndex": cand.sdpMLineIndex,
+        "nonsense": $nonsense
+
+    };
+    this.ws.send(JSON.stringify(candy));
+    if candidates arrive before you have completed 11) you should queue them for sending after 11) completes.
+
+13) await messages on the web socket. The messages will be in a similar form to the ones you just sent. Expect 1 or with type='candidate' and a single message type='answer'. You should check that the session matches the one you sent with the offer. If it does not, you should discard the whole message.
+
+
+14) the candidates you should un-parse back to a string and add to the peer connectio.
+
+            if (data.type == 'candidate') {
+                var jc = {
+                    sdpMLineIndex: data.sdpMLineIndex,
+                    candidate: Phono.sdp.buildCandidate(data.candidate)
+                };
+                var nc = "Huh? ";
+                nc = new RTCIceCandidate(jc);
+	        pc.addIceCandidate(nc);
+            }
+
+15) the offer you also un-parse back to a long SDP string and set it as the Peerconnection remoteDescription:
+
+           if (data.type == 'answer') {
+                var sdp = Phono.sdp.buildSDP(data.sdp);
+                var message = {'sdp': sdp, 'type': data.type};
+                var rtcd = new RTCSessionDescription(message);
+                pc.setRemoteDescription(rtcd).then(function () {
+ 			// step 16;
+                }).catch( function (e) {
+                    console.log("Set Remote description error " + e);
+                });
+            }
+
+16) At this point an onOpen() method should be called for the datachannel avrelay . If this happens, pairing has been sucessful.
+
+17) If this does not happen you can inspect the peerconnection state. Also Looking at the Device Logfiles can be informative. However the device does not send useful error replies in the case of a failed pairing in order to avoid giving an attacker a clue. Messages with invalid  to, nonsense, session values will be ignored
+
+B) upgrading to media.
+
+18) once you have a live avrelay dataChannel, you can request the device 
+'upgrades' the connection. 
+
+19) first however you need to gain access to the microphone and give it to the peer connection:
+
+var constraints = {video: false, audio: true};
+            navigator.mediaDevices.getUserMedia(constraints).then(
+                function (stream) {
+                    pc.addStream(stream);
+                    console.log("sending upgrade request");
+                    avrelay.send(JSON.stringify({type: "upgrade", time: Date.now()}));
+                })
+
+20) the onMessage callback for the avrelay datachannel will fire with a 'patch' message. This contains the new info that needs to be patched into the sdp.
+
+avrelay.onmessage = function (evt) {
+                var message = JSON.parse(evt.data);
+                if ((message.type == "offer" )
+                    || (message.type == "answer")) {
+                    if (message.vinfo && message.ainfo) {
+                        addavpatch(message);
+                    }
+                    var patched = Phono.sdp.patch(duct.peerCon.remoteDescription.sdp, message);
+                    var rtcd = new RTCSessionDescription(patched);
+                    pc.setRemoteDescription(rtcd, srd, srdfail);
+                }
+            };
+
+addavpatch() adds a set of rules (see fav.html for the static object) and applies the patch.
+
+21) when the new upgraded remote description is sucessfully set, create a new 
+answer, set it and then send it to the device
+    pc.createAnswer(function (desc) {
+	pc.setLocalDescription(desc, function () {
+            var mess = {type: desc.type, sdp: desc.sdp, tick: Date.now()};
+            avrelay.send(JSON.stringify(mess));
+        }
+    }
+
+22) Audio and video should now start flowing, causing pc.ontrack() to fire
+with 2 new streams, which you should attach to audio and video renderers.
+
+
+
+C) subsequent connections:
+Once paired, if you use the same client certificate to the same IoT device, you can skip the calculation of the nonsense and send a blank value in the offer an candidate messages. This re-uses the trust relationship created by the initial pairing.
+
+

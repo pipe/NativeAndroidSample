@@ -7,6 +7,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.SerializedName;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 
 /* derived from Phono with original license quoted here */
 /*!
@@ -422,6 +423,8 @@ public class PhonoSDPtoJson {
         String mtype;
         Candidate candidate;
         String sdpMLineIndex;
+        Info info;
+        String time;
     }
 
     class Sdp {
@@ -605,6 +608,77 @@ public class PhonoSDPtoJson {
         return ret;
     }
 
+    class Info {
+        String msid;
+        String datamid;
+        String vtype;
+        String codec;
+        String appdata;
+        String csrc;
+    }
+
+    String patch(String sdpString, ArrayList<Patch> patches) {
+        ArrayList<String> sdpLines = new ArrayList();
+        sdpLines.addAll(Arrays.asList(sdpString.split("\r\n")));
+        for (Patch lpatch : patches) {
+            if (lpatch.action.equals("append")) {
+                sdpLines.addAll(lpatch.lines);
+            } else {
+                int where = sdpLines.size() - 1;
+
+                for (int lno = 0; lno < sdpLines.size(); lno++) {
+                    String sline = sdpLines.get(lno);
+                    if (sline.startsWith(lpatch.at)) {
+                        where = lno;
+                        break;
+                    }
+                }
+                if (lpatch.action.equals("prepend")) {
+                    if (lpatch.line != null) {
+                        sdpLines.add(where, lpatch.line);
+                    }
+                    if (lpatch.lines != null) {
+                        sdpLines.addAll(where, lpatch.lines);
+                    }
+                }
+                if (lpatch.action.equals("increment")) {
+                    String[] bits = sdpLines.get(where).split(" ");
+                    int v = Integer.parseInt(bits[lpatch.field]);
+                    v = v + 1;
+                    bits[lpatch.field] = "" + v;
+                    String line = "";
+                    for (String bit : bits) {
+                        line += bit + " ";
+                    }
+                    line = line.trim();
+                    sdpLines.set(where, line);
+                }
+                if (lpatch.action.equals("replace")) {
+                    sdpLines.set(where, lpatch.line);
+                }
+                if (lpatch.action.equals("duplicate")) {
+                    String withline = null;
+                    for (String sline : sdpLines) {
+                        if (sline.startsWith(lpatch.line)) {
+                            withline = sline;
+                            break;
+                        }
+                    }
+                    if (withline != null) {
+                        sdpLines.add(where, withline);
+                    }
+                }
+            }
+        }
+
+        String sdp = "";
+        for (String l : sdpLines) {
+            if (l.length() > 0) {
+                sdp += (l + "\r\n");
+            }
+        }
+        return sdp;
+    }
 
     // candidate: json representing the body
     // Return a text string in SDP format

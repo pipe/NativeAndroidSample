@@ -15,6 +15,8 @@ public class PhonoSDPtoJsonUnitTest {
     String candidateSdp = "a=candidate:1 1 udp 123 192.168.157.40 40877 typ host name rtp network_name en0 username root password mysecret generation 0";
     String json ="{'to':'7F5574EFC53A9D022E9FE553691579007421996A4E202944FB5CB43067AE5F0C','from':'BC9D96C47964E7F60B1027342B023EA374A2E6C5B8581A5B235131103732749E','type':'answer','session':'7F5574EFC53A9D022E9FE553691579007421996A4E202944FB5CB43067AE5F0C-BC9D96C47964E7F60B1027342B023EA374A2E6C5B8581A5B235131103732749E-1532680329052','sdp':{'contents':[{'candidates':[],'codecs':[],'ice':{'ufrag':'1g6ijvlht6e06','pwd':'3vjkad3la80ivkf8aetlgnfnif'},'media':{'type':'application','port':'1','proto':'DTLS/SCTP','sctpmap':['5000'],'pts':['5000']},'connection':{'nettype':'IN','addrtype':'IP4','address':'0.0.0.0'},'fingerprint':{'hash':'sha-256','print':'BC:9D:96:C4:79:64:E7:F6:0B:10:27:34:2B:02:3E:A3:74:A2:E6:C5:B8:58:1A:5B:23:51:31:10:37:32:74:9E','required':'1'},'mid':'data','setup':'passive','sctpmap':[{'port':5000,'app':'webrtc-datachannel','count':256}]}],'session':{'username':'-','id':'4648475892259889561','ver':'2','nettype':'IN','addrtype':'IP4','address':'127.0.0.1'},'group':{'type':'BUNDLE','contents':['data']}}}";
 
+    String upgrade = "";
+
     public PhonoSDPtoJsonUnitTest() {
 
     }
@@ -57,5 +59,12 @@ public class PhonoSDPtoJsonUnitTest {
         String sdp = m.sdp.toSDP();
         assert (sdp.length() >0);
     }
-    
+
+   /* @Test
+    public void upgradeTest() {
+        PhonoSDPtoJson parser = new PhonoSDPtoJson();
+        PhonoSDPtoJson.Message m = parser.makeMessageFromJson(upgrade);
+        assert (m.mtype.equals("offer"));
+        assert (m.info != null);
+    }*/
 }

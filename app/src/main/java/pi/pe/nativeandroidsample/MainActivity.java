@@ -1,10 +1,15 @@
 package pi.pe.nativeandroidsample;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.Uri;
+import android.provider.Settings;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
+import android.view.SurfaceView;
 
 
 import com.neovisionaries.ws.client.WebSocket;
@@ -13,6 +18,7 @@ import com.neovisionaries.ws.client.WebSocketException;
 import com.neovisionaries.ws.client.WebSocketFactory;
 
 import org.webrtc.DataChannel;
+import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
 import org.webrtc.Logging;
 import org.webrtc.MediaConstraints;
@@ -20,12 +26,18 @@ import org.webrtc.MediaStream;
 import org.webrtc.PeerConnectionFactory;
 import org.webrtc.PeerConnection;
 import org.webrtc.RTCCertificate;
+import org.webrtc.RendererCommon;
 import org.webrtc.RtpReceiver;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
+import org.webrtc.SurfaceViewRenderer;
+import org.webrtc.VideoRenderer;
+import org.webrtc.VideoTrack;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -48,12 +60,12 @@ public class MainActivity extends AppCompatActivity {
     private RTCCertificate certificate;
     private PhonoSDPtoJson phonoParser;
     private String near;
-    private String far = "BC9D96C47964E7F60B1027342B023EA374A2E6C5B8581A5B235131103732749E";
-    private String nonce = "6FC3014356E9F0684D6EC92DD2B0C2EB";
+    private String far = null;
+    private String nonce = null;
     private String session;
     private WebSocket webSocket;
     private String myNonsense = "";
-
+    private  DataChannel videorelay;
 
     // just to be clear, this is a _BAD_ example - this keypair should:
     // a) be unique - one per device
@@ -169,6 +181,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onAddStream(MediaStream mediaStream) {
+                Log.d(Tag, "onAddStream video = "+ mediaStream.videoTracks.size());
 
             }
 
@@ -190,11 +203,28 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onAddTrack(RtpReceiver rtpReceiver, MediaStream[] mediaStreams) {
-
+                Log.d(Tag, "onAddTrack: "+ rtpReceiver.track().kind());
+                runOnUiThread(() -> addVideo(mediaStreams));
             }
         };
 
     }
+
+    void addVideo(MediaStream[] mediaStreams){
+        SurfaceViewRenderer svr = (SurfaceViewRenderer) findViewById(R.id.surfaceView);
+        EglBase rootEglBase = EglBase.create();
+
+        svr.init(rootEglBase.getEglBaseContext(), null);
+        svr.setEnableHardwareScaler(true);
+        svr.setMirror(false);
+        svr.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL);
+        for (MediaStream m:mediaStreams){
+            for (VideoTrack v:m.videoTracks){
+                v.addSink(svr);
+            }
+        }
+    }
+
 
     void setAnswer(SessionDescription ans){
         Log.d(Tag,"setting answer");
@@ -331,7 +361,7 @@ public class MainActivity extends AppCompatActivity {
                 near = con.contents.get(0).fingerprint.print.replace(":", "");
                 Log.d(Tag + " offer", "nearprint " + near);
                 session = near + "-" + far + "-" + System.currentTimeMillis();
-                String nonsense = mkNonsense();
+                String nonsense = (nonce != null) ? mkNonsense():"";
                 offerJson = phonoParser.makeMessage(con, far, near, sessionDescription.type.name().toLowerCase(), nonsense, session);
                 Log.d(Tag + " offer", "json " + offerJson);
                 peerConnection.setLocalDescription(this, sessionDescription);
@@ -390,37 +420,161 @@ public class MainActivity extends AppCompatActivity {
         rtcConfig.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY;
         peerConnection = factory.createPeerConnection(rtcConfig, pcObserver, certificate.privateKey, certificate.certificate);
         DataChannel.Init init = new DataChannel.Init();
-        final DataChannel cert = peerConnection.createDataChannel("cert", init);
+        videorelay = peerConnection.createDataChannel("videorelay", init);
 
-        DataChannel.Observer certO = new DataChannel.Observer() {
-
+        videorelay.registerObserver(new DataChannel.Observer() {
+            String LTag = Tag+".videorelay";
             @Override
             public void onBufferedAmountChange(long l) {
-                Log.d(Tag + " certO", "buffered amount " + l);
+                Log.d(LTag , "buffered amount " + l);
             }
 
             @Override
             public void onStateChange() {
-                Log.d(Tag + " certO", cert.state().name());
-
+                Log.d(LTag , videorelay.state().name());
+                if (videorelay.state() == DataChannel.State.OPEN){
+                    sendString(videorelay,"{\"type\":\"upgrade\",\"time\":\""+System.currentTimeMillis()+"\"}");
+                }
             }
 
             @Override
             public void onMessage(DataChannel.Buffer buffer) {
-                Log.d(Tag + " certO", "Got :" + buffer.toString());
+
+                int len  = buffer.data.remaining();
+                byte []s = new byte[len];
+                buffer.data.get(s);
+                String mess = new String(s);
+
+                Log.d(LTag, videorelay.label() + " --> "+ mess);
+                PhonoSDPtoJson.Message me = phonoParser.makeMessageFromJson(mess);
+                if (me.mtype.equalsIgnoreCase("offer")) {
+                    SessionDescription rd = peerConnection.getRemoteDescription();
+                    if (me.info != null) {
+                        ArrayList <Patch> patches = Patch.videopatch(me);
+                        String sdp = phonoParser.patch(rd.description, patches);
+                        SessionDescription nrd = new SessionDescription(SessionDescription.Type.OFFER, sdp);
+                        executor.execute(() -> {
+                            setNewOffer(nrd);
+                        });
+                    }
+                }
+                if (me.mtype.equals("ok")){
+                    // do video here....
+                }
             }
-        };
-        cert.registerObserver(certO);
+        });
 
         // Set INFO libjingle logging.
         // NOTE: this _must_ happen while |factory| is alive!
         Logging.enableLogToDebugOutput(Logging.Severity.LS_INFO);
     }
 
+
+
+    private void setNewOffer(SessionDescription nrd) {
+        peerConnection.setRemoteDescription(new SdpObserver() {
+                                                @Override
+                                                public void onCreateSuccess(SessionDescription sessionDescription) {
+
+                                                }
+
+                                                @Override
+                                                public void onSetSuccess() {
+                                                    Log.d(Tag,"set new remote description ");
+                                                    createUpgradeAnswer();
+                                                }
+
+                                                @Override
+                                                public void onCreateFailure(String s) {
+
+                                                }
+
+                                                @Override
+                                                public void onSetFailure(String s) {
+                                                    Log.d(Tag,"failed to set new remote description "+s);
+                                                }
+                                            },
+                nrd);
+    }
+
+    private void createUpgradeAnswer() {
+        MediaConstraints sdpMediaConstraints = new MediaConstraints();
+        sdpMediaConstraints.mandatory.add(
+                new MediaConstraints.KeyValuePair("OfferToReceiveAudio", "false"));
+        sdpMediaConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
+                "OfferToReceiveVideo", "true"));
+        peerConnection.createAnswer(new SdpObserver(){
+            @Override
+            public void onCreateSuccess(SessionDescription sessionDescription) {
+                Log.d(Tag,"created upgrade answer");
+                executor.execute(() -> {
+                    peerConnection.setLocalDescription(this,sessionDescription);
+                });
+            }
+
+            @Override
+            public void onSetSuccess() {
+                Log.d(Tag,"set upgrade answer");
+                executor.execute(() -> {
+                    sendUpgradeAnswer();
+                });
+            }
+
+            @Override
+            public void onCreateFailure(String s) {
+                Log.d(Tag,"Failed to create upgrade answer "+s);
+            }
+
+            @Override
+            public void onSetFailure(String s) {
+                Log.d(Tag,"Failed to set upgrade answer "+s);
+            }
+        },sdpMediaConstraints);
+    }
+
+    private void sendUpgradeAnswer() {
+        SessionDescription desc = peerConnection.getLocalDescription();
+        String mess = "{\"type\":\""+ desc.type.name().toLowerCase()+"\", \"sdp\":\"dummy\", \"tick\":\""+ System.currentTimeMillis()+"\"}";
+        sendString(videorelay,mess);
+    }
+
+    void sendString(DataChannel channel, String mess){
+        Charset charset =Charset.defaultCharset();
+
+        ByteBuffer bb = ByteBuffer.wrap(mess.getBytes(charset));
+        DataChannel.Buffer buffer = new DataChannel.Buffer(bb,false);
+        Log.d(Tag,channel.label()+" --> "+mess);
+        channel.send(buffer);
+
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
         super.onCreate(savedInstanceState);
+        Intent intent = getIntent();
+        String action = intent.getAction();
+        Uri data = intent.getData();
+        Log.d(Tag,"intent.data ="+data);
+        if (data != null) {
+            String frag = data.getFragment();
+            String bits[] = frag.split(":");
+            if (bits.length == 2) {
+                far = bits[0];
+                nonce = bits[1];
+            }
+        }
+        SharedPreferences sharedPref = getPreferences(Context.MODE_PRIVATE);
+
+        if (far == null){
+            far = sharedPref.getString("far",null);
+        } else {
+            SharedPreferences.Editor editor = sharedPref.edit();
+            editor.putString("far",far);
+            editor.commit();
+        }
+        Log.d(Tag,"nonce ="+nonce+" far="+far);
+
         phonoParser = new PhonoSDPtoJson();
         setContentView(R.layout.activity_main);
         Context appContext = this.getApplicationContext();
@@ -432,8 +586,12 @@ public class MainActivity extends AppCompatActivity {
         PeerConnectionFactory.startInternalTracingCapture(
                 Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
                         + "webrtc-trace.txt");
-        executor.execute(() -> {
-            makePeerConnection();
-        });
+        if (far != null) {
+            executor.execute(() -> {
+                makePeerConnection();
+            });
+        } else {
+            Log.d(Tag,"no friend");
+        }
     }
 }
