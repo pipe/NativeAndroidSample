@@ -5,7 +5,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.provider.Settings;
-import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
@@ -18,20 +17,26 @@ import com.neovisionaries.ws.client.WebSocketException;
 import com.neovisionaries.ws.client.WebSocketFactory;
 
 import org.webrtc.DataChannel;
+import org.webrtc.DefaultVideoDecoderFactory;
+import org.webrtc.DefaultVideoEncoderFactory;
 import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
 import org.webrtc.Logging;
 import org.webrtc.MediaConstraints;
 import org.webrtc.MediaStream;
 import org.webrtc.PeerConnectionFactory;
+import org.webrtc.RtcCertificatePem;
 import org.webrtc.PeerConnection;
-import org.webrtc.RTCCertificate;
 import org.webrtc.RendererCommon;
 import org.webrtc.RtpReceiver;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
+import org.webrtc.SoftwareVideoDecoderFactory;
+import org.webrtc.SoftwareVideoEncoderFactory;
 import org.webrtc.SurfaceViewRenderer;
-import org.webrtc.VideoRenderer;
+import org.webrtc.VideoCodecInfo;
+import org.webrtc.VideoDecoderFactory;
+import org.webrtc.VideoEncoderFactory;
 import org.webrtc.VideoTrack;
 
 import java.io.File;
@@ -39,13 +44,14 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.security.MessageDigest;
 
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends android.app.Activity {
 
     private static String Tag = "pi.pe.nativeandroidsample.MainActivity";
 
@@ -57,7 +63,7 @@ public class MainActivity extends AppCompatActivity {
     private PeerConnectionFactory.Options options;
     private List<PeerConnection.IceServer> iceServers;
     private PeerConnection.Observer pcObserver;
-    private RTCCertificate certificate;
+    static private RtcCertificatePem certificate;
     private PhonoSDPtoJson phonoParser;
     private String near;
     private String far = null;
@@ -66,6 +72,7 @@ public class MainActivity extends AppCompatActivity {
     private WebSocket webSocket;
     private String myNonsense = "";
     private  DataChannel videorelay;
+    private EglBase rootEglBase ;
 
     // just to be clear, this is a _BAD_ example - this keypair should:
     // a) be unique - one per device
@@ -76,52 +83,20 @@ public class MainActivity extends AppCompatActivity {
 
     void makeCertificate() {
 
-        certificate = new RTCCertificate(
-                "-----BEGIN PRIVATE KEY-----\n" +
-                        "MIIEwAIBADANBgkqhkiG9w0BAQEFAASCBKowggSmAgEAAoIBAQDjcPXFR75C4hxi\n" +
-                        "LVGlT2XMUiWXr6DXaWQvTUGgqEV/tlLkSojCq23DlUaGY9kPAvvDN9PUfj/YifYe\n" +
-                        "jDtOkAWwLftdPCi2rWNpvLVUw15oGP0N04DEohkLq/wz73+/Af3DvdLGuOxEX4in\n" +
-                        "IwEA4UG+iRrNNTaTmIwXhwd09pjW7Catxxr1nMFz4rcPIYOKfAQd3ekxuWkBiY0Q\n" +
-                        "d7uqY8+dsBbrmPVTilwWzcYzCmdAPmql6Tvn4O0E15FPS60y5auN1kk3QV4yR5qE\n" +
-                        "6POePnhyDcqJQ3wE8uZ+4UxR0oBECNw4OAYh6/t8sA/y0BX+zdTmoGb6BSNC1dCm\n" +
-                        "Kmzx3u87AgMBAAECggEBAIWiupWW6ODNkFXTQPS7qRmbbsEojX3kS9xLLXNjS6qV\n" +
-                        "izDd5mtTZKQVkqGmC0R5wUncBJgHMiZeMYGTbclkcCMrcVU/4sArMo1PNtA+Frtd\n" +
-                        "a1pzWmauw76K6B3v7ARj/CHF6BGhWBl4dIeX1qAYupNkZZ4LVSz15eJxEV2VAwrM\n" +
-                        "DLaJ/cuwJU6TRW5SDSzs3L4GJJHDInw0VU9Z4io11mkAc+ao/vE/YiXctg7/m6NG\n" +
-                        "5uj8VnglO0Tnshu/QEulMEvRPJsa6WRhKDCMQdSJJxsD4XoA2Xk3JO3SqfhbFCDQ\n" +
-                        "DYZEeTdPYwpV/f5ulgt5JUJ5P/Lnch6O6S0ypx2TfFECgYEA/JtK0zoIKJ4vo3xT\n" +
-                        "SzlxcSc2/x2zcNpnDviZX15uT7v2+Y6YnRj91LZMDh+BftjcSrJ4DHvZUh4ABvmy\n" +
-                        "4NKkiLxk/zemPKv8jg6XF3Q7MXuOsx1NjamxlRuKWYUphbE1kEUMyahzp8/QYRKp\n" +
-                        "3zoGSyGLLsztog8WAJfhrWKoAZMCgYEA5n8f7bt5d0pDojSVujiuqLk+b1Papf4t\n" +
-                        "Pu5sPC+BQmF+obNQmokguEyMyDaZbJpYKHKxTAF7X4GeGa9v/eRc88Tp9OgYPuTm\n" +
-                        "MwDgmz1fT0/T3znKp7gy3txYXalbrXnLPlh8kP5m+sIbkvNYYmFNUgwzie8YY4Sm\n" +
-                        "enk6MYOChLkCgYEAr180zH6eiWyBEFRRE4mW24LpKKa7HF9Ua01mVZKerRaG+Wzp\n" +
-                        "QS/HkbTaCngPFDyEfAt5Utls4BjZ1f3nFTTIa/G3gIRnEfopRYqVlP/p1Im+YVW3\n" +
-                        "sOEd27IaE9piIGIOGNIHdb1QRjH9rlchvktvcRuhoGU/mWI12UWYtSIoF6cCgYEA\n" +
-                        "pBLb7IMmDKc9i6o45q1QjuQGMIMVQlGzbXeUbic2sMTrujkFaGuycd5z3FUZU3hu\n" +
-                        "xqQV1s+7PZnrq8b5RlaXYCLMkzvffm27+5RlTbwbKz7cx6rAujDhbUiWUl2q18q5\n" +
-                        "xXCBg0jEjz07GZjFUoqG2p+61DXxO24Cf23p4bMGZmkCgYEAo/5jU0T4hHTTJJ1i\n" +
-                        "NkkjVZoFUIbcnJOZPssdbIGlh5S2v/bWlt9UanrENWIlxvyJHGdYkt2GN0uQMd7m\n" +
-                        "g7tC9reu62rFf9AcOPAx7KjRf/Xph8QZblv+Z/85kE4bv7J/g8aVr2tdZFyhtNPo\n" +
-                        "Qb1L+4/ukPTgpRSquhpDtD0VrPM=\n" +
-                        "-----END PRIVATE KEY-----\n",
-                "-----BEGIN CERTIFICATE-----\n" +
-                        "MIICnjCCAYYCCQCl8bejKUVbHTANBgkqhkiG9w0BAQsFADARMQ8wDQYDVQQDDAZ8\n" +
-                        "cGlwZXwwHhcNMTgwNzI2MjAxMjAwWhcNMjgwNzIzMjAxMjAwWjARMQ8wDQYDVQQD\n" +
-                        "DAZ8cGlwZXwwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDjcPXFR75C\n" +
-                        "4hxiLVGlT2XMUiWXr6DXaWQvTUGgqEV/tlLkSojCq23DlUaGY9kPAvvDN9PUfj/Y\n" +
-                        "ifYejDtOkAWwLftdPCi2rWNpvLVUw15oGP0N04DEohkLq/wz73+/Af3DvdLGuOxE\n" +
-                        "X4inIwEA4UG+iRrNNTaTmIwXhwd09pjW7Catxxr1nMFz4rcPIYOKfAQd3ekxuWkB\n" +
-                        "iY0Qd7uqY8+dsBbrmPVTilwWzcYzCmdAPmql6Tvn4O0E15FPS60y5auN1kk3QV4y\n" +
-                        "R5qE6POePnhyDcqJQ3wE8uZ+4UxR0oBECNw4OAYh6/t8sA/y0BX+zdTmoGb6BSNC\n" +
-                        "1dCmKmzx3u87AgMBAAEwDQYJKoZIhvcNAQELBQADggEBAD+1dVjEIwLSOKMdgxbH\n" +
-                        "19REhClPP+sS6rv+W5MP7vGUFmysYEgh6vzGJSLJLXrL1Z9JREe9yqb/W2/iEC3x\n" +
-                        "DPQJtOLMZa3qWW/05AA5EKoxx/TotbENakWkg5PAmejTvUfN4fIC3vlCKGvZ67On\n" +
-                        "6U3a/AlJudzBtz9k8n+ZSTDGyJNjY5CmT992IqILMp4iMtvxHRVjGGTNljqIaqZ0\n" +
-                        "5rtMn94rdNeEWrWlkps8MJr5nqTdJlS7ta/g8mUHjjBh1XLjSladPDUpdeuS3ANc\n" +
-                        "xgEgS6OR2kvepBXDjT+myVqWhxICey0xVi7WmK56N/PmZaXO5rv0wfIBFwT+3Ag0\n" +
-                        "Ka8=\n" +
-                        "-----END CERTIFICATE-----\n");
+        SharedPreferences sharedPref = this.getPreferences(Context.MODE_PRIVATE);
+        String key = sharedPref.getString("pipeKey",null);
+        String cert = sharedPref.getString("pipeCert",null);
+        if ((key != null ) && (cert !=null)){
+            certificate = new RtcCertificatePem(key,cert);
+        } else {
+            certificate = RtcCertificatePem.generateCertificate();
+            key = certificate.privateKey;
+            cert = certificate.certificate;
+            SharedPreferences.Editor editor = sharedPref.edit();
+            editor.putString("pipeKey",key);
+            editor.putString("pipeCert",cert);
+            editor.commit();
+        }
     }
 
     void makeIceServers() {
@@ -211,8 +186,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     void addVideo(MediaStream[] mediaStreams){
+        Log.d(Tag,"adding media stream(s)");
         SurfaceViewRenderer svr = (SurfaceViewRenderer) findViewById(R.id.surfaceView);
-        EglBase rootEglBase = EglBase.create();
 
         svr.init(rootEglBase.getEglBaseContext(), null);
         svr.setEnableHardwareScaler(true);
@@ -288,10 +263,10 @@ public class MainActivity extends AppCompatActivity {
                     Log.e(Tag, "not expecting message from you");
                 }
             } else {
-                Log.e(Tag, "to mixup");
+                Log.e(Tag, "to mixup expecting "+near+" got "+from.mto);
             }
         } else {
-            Log.e(Tag, "session mixup");
+            Log.e(Tag, "session mixup "+from.session+" != "+session);
         }
 
     }
@@ -360,7 +335,9 @@ public class MainActivity extends AppCompatActivity {
                 PhonoSDPtoJson.Contents con = phonoParser.parseSDP(sessionDescription.description);
                 near = con.contents.get(0).fingerprint.print.replace(":", "");
                 Log.d(Tag + " offer", "nearprint " + near);
-                session = near + "-" + far + "-" + System.currentTimeMillis();
+                if (session == null) {
+                    session = near + "-" + far + "-" + System.currentTimeMillis();
+                }
                 String nonsense = (nonce != null) ? mkNonsense():"";
                 offerJson = phonoParser.makeMessage(con, far, near, sessionDescription.type.name().toLowerCase(), nonsense, session);
                 Log.d(Tag + " offer", "json " + offerJson);
@@ -394,10 +371,34 @@ public class MainActivity extends AppCompatActivity {
 
     void makePeerConnection() {
 
-        if (factory == null) {
+        VideoEncoderFactory encoderFactory;
+        VideoDecoderFactory decoderFactory;
+        encoderFactory = new DefaultVideoEncoderFactory(
+                    rootEglBase.getEglBaseContext(), true , true);
+        decoderFactory = new DefaultVideoDecoderFactory(rootEglBase.getEglBaseContext());
+        VideoCodecInfo [] decs = decoderFactory.getSupportedCodecs();
+        boolean hard264 = false;
+        for (VideoCodecInfo c:decs)  {
+            if (c.name.toUpperCase().contains("H264")){
+                hard264 = true;
+                break;
+            }
+        }
+        Log.d(Tag , "hard264 =  " + hard264);
+
+        if (!hard264){
+            encoderFactory = new SoftwareVideoEncoderFactory();
+            decoderFactory = new SoftwareVideoDecoderFactory();
+        }
+        /*if (options == null){
+            options = new PeerConnectionFactory.Options();
+        }*/
+        if (factory == null){
             factory = PeerConnectionFactory.builder()
-                    .setOptions(options)
-                    .createPeerConnectionFactory();
+                //.setOptions(options)
+                .setVideoEncoderFactory(encoderFactory)
+                .setVideoDecoderFactory(decoderFactory)
+                .createPeerConnectionFactory();
         }
 
         if (iceServers == null) {
@@ -418,7 +419,9 @@ public class MainActivity extends AppCompatActivity {
         rtcConfig.bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE;
         rtcConfig.rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE;
         rtcConfig.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY;
-        peerConnection = factory.createPeerConnection(rtcConfig, pcObserver, certificate.privateKey, certificate.certificate);
+        rtcConfig.certificate = certificate;
+        peerConnection = factory.createPeerConnection(rtcConfig, pcObserver);
+        //peerConnection.getCertificate();
         DataChannel.Init init = new DataChannel.Init();
         videorelay = peerConnection.createDataChannel("videorelay", init);
 
@@ -445,13 +448,14 @@ public class MainActivity extends AppCompatActivity {
                 buffer.data.get(s);
                 String mess = new String(s);
 
-                Log.d(LTag, videorelay.label() + " --> "+ mess);
+                Log.d(LTag, videorelay.label() + " <-- "+ mess);
                 PhonoSDPtoJson.Message me = phonoParser.makeMessageFromJson(mess);
                 if (me.mtype.equalsIgnoreCase("offer")) {
                     SessionDescription rd = peerConnection.getRemoteDescription();
                     if (me.info != null) {
                         ArrayList <Patch> patches = Patch.videopatch(me);
                         String sdp = phonoParser.patch(rd.description, patches);
+                        Log.d(LTag,"patched SDP is :"+sdp);
                         SessionDescription nrd = new SessionDescription(SessionDescription.Type.OFFER, sdp);
                         executor.execute(() -> {
                             setNewOffer(nrd);
@@ -472,6 +476,7 @@ public class MainActivity extends AppCompatActivity {
 
 
     private void setNewOffer(SessionDescription nrd) {
+        Log.d(Tag,"going to set new remote description ");
         peerConnection.setRemoteDescription(new SdpObserver() {
                                                 @Override
                                                 public void onCreateSuccess(SessionDescription sessionDescription) {
@@ -506,7 +511,7 @@ public class MainActivity extends AppCompatActivity {
         peerConnection.createAnswer(new SdpObserver(){
             @Override
             public void onCreateSuccess(SessionDescription sessionDescription) {
-                Log.d(Tag,"created upgrade answer");
+                Log.d(Tag,"created upgrade answer "+sessionDescription.description);
                 executor.execute(() -> {
                     peerConnection.setLocalDescription(this,sessionDescription);
                 });
@@ -567,9 +572,18 @@ public class MainActivity extends AppCompatActivity {
         SharedPreferences sharedPref = getPreferences(Context.MODE_PRIVATE);
 
         if (far == null){
+            Log.d(Tag,"no QR passed in - lets see if it's in a store....");
+
             far = sharedPref.getString("far",null);
+            if (far == null) {
+                Log.d(Tag,"no far - nothing in store....");
+            } else {
+                Log.d(Tag,"far loaded from shared prefs");
+                nonce ="";
+            }
         } else {
             SharedPreferences.Editor editor = sharedPref.edit();
+            Log.d(Tag,"far saved to shared prefs");
             editor.putString("far",far);
             editor.commit();
         }
@@ -578,11 +592,16 @@ public class MainActivity extends AppCompatActivity {
         phonoParser = new PhonoSDPtoJson();
         setContentView(R.layout.activity_main);
         Context appContext = this.getApplicationContext();
+
+
         PeerConnectionFactory.initialize(
                 PeerConnectionFactory.InitializationOptions.builder(appContext)
                         .setFieldTrials("false")
                         .setEnableInternalTracer(true)
                         .createInitializationOptions());
+
+        rootEglBase = EglBase.create();
+
         PeerConnectionFactory.startInternalTracingCapture(
                 Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
                         + "webrtc-trace.txt");
