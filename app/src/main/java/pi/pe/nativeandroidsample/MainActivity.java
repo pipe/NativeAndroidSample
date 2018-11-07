@@ -74,10 +74,12 @@ public class MainActivity extends android.app.Activity {
     private  DataChannel videorelay;
     private EglBase rootEglBase ;
 
-    // just to be clear, this is a _BAD_ example - this keypair should:
+
+
+    // a keypair should:
     // a) be unique - one per device
     // b) be generated once at app install time by the webRTC framework
-    // c) saved in an encrypted _local_ keystore
+    // c) saved in an encrypted _local_ keystore on the device
     // d) only retrevied when needed and mem wiped asap
     // e) definitely not checked into a public github repo.
 
@@ -376,19 +378,29 @@ public class MainActivity extends android.app.Activity {
         encoderFactory = new DefaultVideoEncoderFactory(
                     rootEglBase.getEglBaseContext(), true , true);
         decoderFactory = new DefaultVideoDecoderFactory(rootEglBase.getEglBaseContext());
+
+
         VideoCodecInfo [] decs = decoderFactory.getSupportedCodecs();
         boolean hard264 = false;
         for (VideoCodecInfo c:decs)  {
+            Log.d(Tag,"Decoder: "+c.name.toUpperCase());
+
+            for (String k:c.params.keySet()){
+                String v = c.params.get(k);
+                Log.d(Tag, "\t\t"+k + "=" + v);
+            }
             if (c.name.toUpperCase().contains("H264")){
-                hard264 = true;
-                break;
+                if  (c.params.get("profile-level-id").equals("42e01f")) {
+                    hard264 = true;
+                    break;
+                }
             }
         }
         Log.d(Tag , "hard264 =  " + hard264);
 
         if (!hard264){
-            encoderFactory = new SoftwareVideoEncoderFactory();
             decoderFactory = new SoftwareVideoDecoderFactory();
+            encoderFactory = new SoftwareVideoEncoderFactory();
         }
         /*if (options == null){
             options = new PeerConnectionFactory.Options();
