@@ -194,7 +194,7 @@ public class MainActivity extends android.app.Activity {
         svr.init(rootEglBase.getEglBaseContext(), null);
         svr.setEnableHardwareScaler(true);
         svr.setMirror(false);
-        svr.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL);
+        svr.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_BALANCED);
         for (MediaStream m:mediaStreams){
             for (VideoTrack v:m.videoTracks){
                 v.addSink(svr);
