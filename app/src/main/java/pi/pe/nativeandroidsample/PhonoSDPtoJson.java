@@ -424,6 +424,8 @@ public class PhonoSDPtoJson {
         Candidate candidate;
         String sdpMLineIndex;
         Info info;
+        Info vinfo;
+        Info ainfo;
         String time;
     }
 
@@ -612,6 +614,7 @@ public class PhonoSDPtoJson {
         String msid;
         String datamid;
         String vtype;
+        String atype;
         String codec;
         String appdata;
         String csrc;
