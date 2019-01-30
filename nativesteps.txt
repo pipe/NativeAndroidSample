@@ -149,15 +149,63 @@ addavpatch() adds a set of rules (see fav.html for the static object) and applie
 answer, set it and then send it to the device
     pc.createAnswer(function (desc) {
 	pc.setLocalDescription(desc, function () {
-            var mess = {type: desc.type, sdp: desc.sdp, tick: Date.now()};
+            var desc = duct.peerCon.localDescription;
+            var sdp = Phono.sdp.parseSDP(desc.sdp);
+            var mess = {type: desc.type, sdp: sdp, tick: Date.now()};
+            console.log("sending " + JSON.stringify(mess));
             avrelay.send(JSON.stringify(mess));
         }
     }
 
+(Notice that if you have added a local audio stream, this will be enabled here too)
+
 22) Audio and video should now start flowing, causing pc.ontrack() to fire
 with 2 new streams, which you should attach to audio and video renderers.
 
+23) You can now manage the activity of the 3 streams. The streams originating from the |pipe| device can be enabled and disabled by sending micon/micoff cameraon/camreaoff commands down the avrelay datachannel.
 
+Video:
+                if (enable) {
+                    avrelay.send(JSON.stringify({type: "cameraon"}));
+                    video.play();
+                } else {
+                    avrelay.send(JSON.stringify({type: "cameraoff"}));
+                    video.pause();
+                }
+Microphone:
+                if (enable) {
+                    vidcc.send(JSON.stringify({type: "micon"}));
+                    audio.play();
+                } else {
+                    vidcc.send(JSON.stringify({type: "micoff"}));
+                    audio.pause();
+                }
+
+
+24) The audio playout to the |pipe| device is a bit more complex since it requires a fresh offer-answer round-trip.
+You obtain an audio media stream in the usual way (GetUserMedia) and then add it to the peerconnection:
+
+                  duct.peerCon.addStream(stream);
+or remove it:
+                    var ast = duct.peerCon.getLocalStreams()[0];
+                    var at = ast.getAudioTracks()[0];
+                    ast.removeTrack(at);
+                    duct.peerCon.getSenders()[0].track.stop();
+
+25) Either of these actions will cause peerConnection.onnegotiationneeded() to fire. This can be used to perfrom the O/A - since we already know everything we need to, we can just increment the index of the existing offer using patch:
+
+ duct.peerCon.onnegotiationneeded = function () {
+                        var message = {type: "offer", patches:  [ {
+                           "action": "increment", "at": "o=-", "field": 2 } ] };
+                        var patched = Phono.sdp.patch(duct.peerCon.remoteDescription.sdp, message);
+                        var rtcd = new RTCSessionDescription(patched);
+                        duct.peerCon.setRemoteDescription(rtcd).then(function (r) {
+                            srd(r)
+                        })};
+
+the existing logic in 21 can be reused to send the new answer to |pipe| 
+
+(Note that if you tell |pipe| that you will send audio data, but don't then it will drop the whole peerconnection after about 5 seconds).
 
 C) subsequent connections:
 Once paired, if you use the same client certificate to the same IoT device, you can skip the calculation of the nonsense and send a blank value in the offer an candidate messages. This re-uses the trust relationship created by the initial pairing.
