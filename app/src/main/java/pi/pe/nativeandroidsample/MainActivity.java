@@ -102,12 +102,14 @@ public class MainActivity extends AppCompatActivity {
         SharedPreferences sharedPref = this.getPreferences(Context.MODE_PRIVATE);
         String key = sharedPref.getString("pipeKey", null);
         String cert = sharedPref.getString("pipeCert", null);
+        //cert = null;
         if ((key != null) && (cert != null)) {
             certificate = new RtcCertificatePem(key, cert);
         } else {
-            certificate = RtcCertificatePem.generateCertificate();
+            certificate = RtcCertificatePem.generateCertificate(PeerConnection.KeyType.RSA, 1*365*24*60*60*1000);
             key = certificate.privateKey;
             cert = certificate.certificate;
+            Log.d(Tag, "made fresh key ");
             SharedPreferences.Editor editor = sharedPref.edit();
             editor.putString("pipeKey", key);
             editor.putString("pipeCert", cert);
