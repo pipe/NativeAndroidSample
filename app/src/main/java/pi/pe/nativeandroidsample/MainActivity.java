@@ -1,7 +1,6 @@
 package pi.pe.nativeandroidsample;
 
 import android.Manifest;
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -9,10 +8,13 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
+import android.view.View;
 import android.widget.CompoundButton;
 import android.widget.Switch;
-
 
 import com.neovisionaries.ws.client.WebSocket;
 import com.neovisionaries.ws.client.WebSocketAdapter;
@@ -29,10 +31,10 @@ import org.webrtc.IceCandidate;
 import org.webrtc.Logging;
 import org.webrtc.MediaConstraints;
 import org.webrtc.MediaStream;
-import org.webrtc.PeerConnectionFactory;
-import org.webrtc.RtcCertificatePem;
 import org.webrtc.PeerConnection;
+import org.webrtc.PeerConnectionFactory;
 import org.webrtc.RendererCommon;
+import org.webrtc.RtcCertificatePem;
 import org.webrtc.RtpReceiver;
 import org.webrtc.RtpSender;
 import org.webrtc.SdpObserver;
@@ -51,16 +53,12 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.security.MessageDigest;
-
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
-import android.support.v7.app.AppCompatActivity;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -478,6 +476,7 @@ public class MainActivity extends AppCompatActivity {
         rtcConfig.certificate = certificate;
         peerConnection = factory.createPeerConnection(rtcConfig, pcObserver);
         //peerConnection.getCertificate();
+        echoWs();
         DataChannel.Init init = new DataChannel.Init();
         videorelay = peerConnection.createDataChannel("avrelay", init);
 
@@ -491,11 +490,13 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onStateChange() {
-                Log.d(LTag, videorelay.state().name());
-                if (videorelay.state() == DataChannel.State.OPEN) {
-                    sendString(videorelay, "{\"type\":\"upgrade\",\"time\":\"" + System.currentTimeMillis() + "\"}");
-                    initSwitches();
-                }
+                executor.execute(() -> {
+                    Log.d(LTag, videorelay.state().name());
+                    if (videorelay.state() == DataChannel.State.OPEN) {
+                        sendString(videorelay, "{\"type\":\"upgrade\",\"time\":\"" + System.currentTimeMillis() + "\"}");
+                        initSwitches();
+                    }
+                });
             }
 
             @Override
@@ -531,6 +532,63 @@ public class MainActivity extends AppCompatActivity {
         Logging.enableLogToDebugOutput(Logging.Severity.LS_INFO);
     }
 
+    private void echoWs(){
+        Log.d(Tag, "Starting an echo websocket Datatchannel");
+        DataChannel.Init init = new DataChannel.Init();
+        String echoId = "EC40";
+        DataChannel echo = peerConnection.createDataChannel("wss://pi.pe/websocket/?finger="+echoId , init);
+        int counts[] = new int[1];
+        String alpha = "abcdefghijklmnopqrstuvwxyz";
+        String num = "0123456789";
+        String upper = alpha.toUpperCase(Locale.ROOT);
+        StringBuffer longb = new StringBuffer(alpha);
+        for (int i=0;i<100;i++){
+            longb.append(num).append(upper).append(alpha);
+        }
+        String longs = longb.toString();
+        echo.registerObserver(new DataChannel.Observer() {
+            String LTag = Tag + ".echoWs";
+
+            @Override
+            public void onBufferedAmountChange(long l) {
+                Log.d(LTag, "buffered amount " + l);
+            }
+
+            @Override
+            public void onStateChange() {
+                executor.execute(() -> {
+                    Log.d(LTag, echo.state().name());
+                    if (echo.state() == DataChannel.State.OPEN) {
+                        sendString(echo, "{\"to\":\"" + echoId + "\",\"from\":\"" + echoId + "\",\"longs\":\"" + longs + "\"}");
+                        Log.d(LTag, "Opened echo ws");
+                    }
+                });
+            }
+
+            @Override
+            public void onMessage(DataChannel.Buffer buffer) {
+
+                int len = buffer.data.remaining();
+                byte[] s = new byte[len];
+                buffer.data.get(s);
+                String mess = new String(s);
+                if ((mess.startsWith("{")) && (mess.endsWith("}"))) {
+                    Log.d(LTag, "" + counts[0] + " echo ws got " + mess.length() + "bytes");
+
+                    executor.execute(() -> {
+                        sendString(echo, "{\"to\":\"" + echoId + "\",\"from\":\"" + echoId + "\",\"longs\":\"" + longs + "\"}");
+                    });
+                    runOnUiThread(() -> {
+                        android.widget.EditText countTex = findViewById(R.id.echoCount);
+                        countTex.setText("" + counts[0]);
+                    });
+                    counts[0]++;
+                } else {
+                    Log.e(LTag, "" + counts[0] + " echo ws got " + mess);
+                }
+            }
+        });
+    }
 
     private void setNewOffer(SessionDescription nrd) {
         Log.d(Tag, "going to set new remote description ");
@@ -638,7 +696,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         Switch speakersw = findViewById(R.id.speakersw);
-        final Activity that = this;
+        final AppCompatActivity that = this;
         speakersw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
 
@@ -699,6 +757,7 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode,
                                            String[] permissions,
                                            int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == MYAUDIOPERM) {
             if ((grantResults.length == 1) && (grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
                 executor.execute(() -> {
@@ -726,6 +785,7 @@ public class MainActivity extends AppCompatActivity {
                 nonce = bits[1];
             }
         }
+
         SharedPreferences sharedPref = getPreferences(Context.MODE_PRIVATE);
 
         if (far == null) {
@@ -733,7 +793,8 @@ public class MainActivity extends AppCompatActivity {
 
             far = sharedPref.getString("far", null);
             if (far == null) {
-                Log.d(Tag, "no far - nothing in store....");
+                Log.d(Tag, "no far - nothing in store.... last gasp");
+
             } else {
                 Log.d(Tag, "far loaded from shared prefs");
                 nonce = "";
