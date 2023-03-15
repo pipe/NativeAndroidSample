@@ -38,6 +38,7 @@ public class Patch {
                 "a=sendonly",
                 "a=rtcp-mux",
                 "a=rtpmap:" + mess.vinfo.vtype + " " + mess.vinfo.codec,
+                //"a=fmtp:" + mess.vinfo.vtype + " packetization-mode=1;profile-level-id="+((mess.vinfo.vprofile!=null)?mess.vinfo.vprofile:"42e01f"),
                 "a=fmtp:" + mess.vinfo.vtype + " packetization-mode=1;profile-level-id=42e01f",
                 "a=ssrc:" + mess.vinfo.csrc + " cname:drone",
                 "a=ssrc:" + mess.vinfo.csrc + " mslabel:" + mess.vinfo.msid,

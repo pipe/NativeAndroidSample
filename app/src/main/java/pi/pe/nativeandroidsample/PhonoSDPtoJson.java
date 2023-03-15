@@ -618,6 +618,9 @@ public class PhonoSDPtoJson {
         String codec;
         String appdata;
         String csrc;
+        String vprofile;
+        String width;
+        String height;
     }
 
     String patch(String sdpString, ArrayList<Patch> patches) {

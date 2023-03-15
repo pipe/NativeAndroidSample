@@ -33,6 +33,9 @@ import org.webrtc.MediaConstraints;
 import org.webrtc.MediaStream;
 import org.webrtc.PeerConnection;
 import org.webrtc.PeerConnectionFactory;
+import org.webrtc.RTCStats;
+import org.webrtc.RTCStatsCollectorCallback;
+import org.webrtc.RTCStatsReport;
 import org.webrtc.RendererCommon;
 import org.webrtc.RtcCertificatePem;
 import org.webrtc.RtpReceiver;
@@ -57,6 +60,10 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -79,6 +86,7 @@ public class MainActivity extends AppCompatActivity {
     private String far = null;
     private String nonce = null;
     private String session;
+    private String dataMid = "atad";
     private WebSocket webSocket;
     private String myNonsense = "";
     private DataChannel videorelay;
@@ -86,6 +94,7 @@ public class MainActivity extends AppCompatActivity {
     private VideoTrack remoteVideoTrack;
     private static int MYAUDIOPERM = 101;
     private AudioTrack localAudioTrack;
+    private SurfaceViewRenderer svr;
 
 
     // a keypair should:
@@ -118,14 +127,14 @@ public class MainActivity extends AppCompatActivity {
     void makeIceServers() {
 
         iceServers = new ArrayList<>();
-        iceServers.add(PeerConnection.IceServer.builder("stun:146.148.121.175:3478")
+        iceServers.add(PeerConnection.IceServer.builder("stun:stun4.l.google.com:19302")
                 .setTlsCertPolicy(PeerConnection.TlsCertPolicy.TLS_CERT_POLICY_INSECURE_NO_CHECK).createIceServer()
         );
 
-        iceServers.add(PeerConnection.IceServer.builder("turn:146.148.121.175:3478")
+        /*iceServers.add(PeerConnection.IceServer.builder("turn:146.148.121.175:3478?transport=udp")
                 .setUsername("panda").setPassword("panda")
                 .setTlsCertPolicy(PeerConnection.TlsCertPolicy.TLS_CERT_POLICY_INSECURE_NO_CHECK)
-                .createIceServer());
+                .createIceServer());*/
     }
 
     void sendCandidate(IceCandidate ican) {
@@ -145,6 +154,27 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onIceConnectionChange(PeerConnection.IceConnectionState iceConnectionState) {
                 Log.d(Tag + ".pco", "onIceConnectionChange " + iceConnectionState.name());
+                if (iceConnectionState == PeerConnection.IceConnectionState.CONNECTED){
+                    peerConnection.getStats(new RTCStatsCollectorCallback() {
+                        @Override
+                        public void onStatsDelivered(RTCStatsReport rtcStatsReport) {
+                            String ltag = Tag+".stats";
+                            Map<String, RTCStats> stats = rtcStatsReport.getStatsMap();
+                            Optional<Object> remoteCandidateId = stats.values().stream()
+                                    .filter((v) -> v.getType().equals("candidate-pair"))
+                                    .filter((v) -> (Boolean) v.getMembers().get("nominated"))
+                                    .map((v) -> v.getMembers().get("remoteCandidateId"))
+                                    .findFirst();
+                            remoteCandidateId.ifPresent((cid) -> {
+                                Map<String, Object> m = stats.get(cid).getMembers();
+                                String ip = (String) m.get("ip");
+                                Integer port = (Integer) m.get("port");
+                                String ctype = (String) m.get("candidateType");
+                                Log.i(ltag, cid+ ":"+ctype + "->"+ ip+"/"+port);
+                            });
+                        }
+                    });
+                }
 
             }
 
@@ -222,12 +252,25 @@ public class MainActivity extends AppCompatActivity {
     void addVideo(MediaStream[] mediaStreams) {
         Log.d(Tag, "adding video media stream(s)");
 
-        SurfaceViewRenderer svr = (SurfaceViewRenderer) findViewById(R.id.surfaceView);
+        if (svr == null) {
+            svr = (SurfaceViewRenderer) findViewById(R.id.surfaceView);
+            RendererCommon.RendererEvents rev = new RendererCommon.RendererEvents(){
+                @Override
+                public void onFirstFrameRendered() {
+                    Log.i(Tag,"First frame Rendered");
 
-        svr.init(rootEglBase.getEglBaseContext(), null);
-        svr.setEnableHardwareScaler(true);
-        svr.setMirror(false);
-        svr.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_BALANCED);
+                }
+
+                @Override
+                public void onFrameResolutionChanged(int i, int i1, int i2) {
+
+                }
+            };
+            svr.init(rootEglBase.getEglBaseContext(), rev);
+            svr.setEnableHardwareScaler(true);
+            svr.setMirror(false);
+            svr.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_BALANCED);
+        }
         for (MediaStream m : mediaStreams) {
             for (VideoTrack v : m.videoTracks) {
                 v.addSink(svr);
@@ -236,6 +279,12 @@ public class MainActivity extends AppCompatActivity {
         }
         Switch sw = findViewById(R.id.videosw);
         sw.setChecked(true);
+        new Timer().schedule( new TimerTask() {
+            @Override
+            public void run() {
+                executor.execute( () -> {again();});
+            }
+        }, 10000);
     }
 
     void setAnswer(SessionDescription ans) {
@@ -265,7 +314,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     void setCandiate(String cs, String idx) {
-        IceCandidate can = new IceCandidate("data", Integer.parseInt(idx), cs);
+        IceCandidate can = new IceCandidate(dataMid, Integer.parseInt(idx), cs);
         peerConnection.addIceCandidate(can);
     }
 
@@ -289,7 +338,7 @@ public class MainActivity extends AppCompatActivity {
                             Log.d(Tag, "Got candidate ");
                             String csdp = from.candidate.toSdp(null);
                             Log.d(Tag, csdp);
-                            executor.execute(() -> setCandiate(csdp, from.sdpMLineIndex));
+                            executor.execute(() -> setCandiate(csdp,from.sdpMLineIndex));
 
                             break;
                         default:
@@ -319,6 +368,8 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         webSocket.connect();
+        Log.d(Tag, "connected as" + near);
+
         webSocket.sendText(toSend);
     }
 
@@ -375,6 +426,7 @@ public class MainActivity extends AppCompatActivity {
                 if (session == null) {
                     session = near + "-" + far + "-" + System.currentTimeMillis();
                 }
+                dataMid = con.contents.get(0).mid;
                 String nonsense = (nonce != null) ? mkNonsense() : "";
                 offerJson = phonoParser.makeMessage(con, far, near, sessionDescription.type.name().toLowerCase(), nonsense, session);
                 Log.d(Tag + " offer", "json " + offerJson);
@@ -476,10 +528,16 @@ public class MainActivity extends AppCompatActivity {
         rtcConfig.certificate = certificate;
         peerConnection = factory.createPeerConnection(rtcConfig, pcObserver);
         //peerConnection.getCertificate();
-        echoWs();
+        //echoWs();
         DataChannel.Init init = new DataChannel.Init();
+        /*
+                       case 'ws://localhost:8181/bin_ws':
+                case 'ws://localhost:44499/datastream':
+                case 'ws://localhost:44499/event':
+                case 'ws://localhost:44499/api':
+                case 'ws://localhost:38777/':
+         */
         videorelay = peerConnection.createDataChannel("avrelay", init);
-
         videorelay.registerObserver(new DataChannel.Observer() {
             String LTag = Tag + ".videorelay";
 
@@ -490,13 +548,13 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onStateChange() {
-                executor.execute(() -> {
-                    Log.d(LTag, videorelay.state().name());
-                    if (videorelay.state() == DataChannel.State.OPEN) {
-                        sendString(videorelay, "{\"type\":\"upgrade\",\"time\":\"" + System.currentTimeMillis() + "\"}");
+                if (videorelay.state() == DataChannel.State.OPEN) {
+                    sendString(videorelay, "{\"type\":\"upgrade\",\"time\":\"" + System.currentTimeMillis() + "\"}");
+                    executor.execute(() -> {
+                        Log.d(LTag, videorelay.state().name());
                         initSwitches();
-                    }
-                });
+                    });
+                }
             }
 
             @Override
@@ -526,6 +584,10 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         });
+        DataChannel chdata = peerConnection.createDataChannel("ws://localhost:44499/datastream", init);
+        DataChannel cheevent  = peerConnection.createDataChannel("ws://localhost:44499/event", init);
+        DataChannel chapi = peerConnection.createDataChannel("ws://localhost:44499/api", init);
+        DataChannel chSevens = peerConnection.createDataChannel("ws://localhost:38777/", init);
 
         // Set INFO libjingle logging.
         // NOTE: this _must_ happen while |factory| is alive!
@@ -769,6 +831,21 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    void again(){
+        if (peerConnection != null){
+            Log.d(Tag, "play it again sam.");
+
+            peerConnection.close();
+            runOnUiThread( () -> {svr.clearImage();});
+
+            peerConnection = null;
+            session = null;
+            videorelay = null;
+
+            makePeerConnection();
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
@@ -794,7 +871,8 @@ public class MainActivity extends AppCompatActivity {
             far = sharedPref.getString("far", null);
             if (far == null) {
                 Log.d(Tag, "no far - nothing in store.... last gasp");
-
+                far="65196ECF925337B9142945954B6DEE908A3EB244DC8DD2302315D66EAEE68202";
+                nonce= "A6D9F4DC35FAC09CE24A10FA7356BF59";
             } else {
                 Log.d(Tag, "far loaded from shared prefs");
                 nonce = "";
